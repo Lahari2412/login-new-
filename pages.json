@@ -1,0 +1,15 @@
+{
+    "d9cdddfdee20e79a137448fd2cfa13b8": {
+        "page_script_hash": "d9cdddfdee20e79a137448fd2cfa13b8",
+        "page_name": "login",
+        "icon": "",
+        "script_path": "D:\\Swayaan\\login(new)\\login.py"
+    },
+    "e8a094b2b073833db62ad61eab35a94b": {
+        "page_script_hash": "e8a094b2b073833db62ad61eab35a94b",
+        "page_name": "home",
+        "icon": "",
+        "script_path": "D:\\Swayaan\\login(new)\\pages\\home.py"
+    }
+    
+}
