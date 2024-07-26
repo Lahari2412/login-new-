@@ -57,46 +57,48 @@ if 'selected_candidates' not in st.session_state:
 if 'creating_new_job' not in st.session_state:
     st.session_state['creating_new_job'] = False
 
-if 'selected_candidates' not in st.session_state:
-    st.session_state['selected_candidates'] = []
 if 'checked_candidates' not in st.session_state:
-    st.session_state['checked_candidates'] = []
+    st.session_state['checked_candidates'] = set()  # Initialize as a set for fast add/remove operations
+if 'status_update' not in st.session_state:
+    st.session_state['status_update'] = {}
+if 'df_candidates' not in st.session_state:
+    st.session_state['df_candidates'] = pd.DataFrame()  # Initialize with empty DataFrame
+# if 'checked_candidates' not in st.session_state:
+#     st.session_state['checked_candidates'] = []
 
 # Alert boxes
-
 # Display success message at the top if the flag is set
 if st.session_state['JD_success_flag']:
     st.success("Job description created successfully!")
-    st.session_state['success_flag'] = False 
-
+    st.session_state['JD_success_flag'] = False  # Reset the flag
 
 if st.session_state['JD_retrieve_error_flag']:
     st.error("Failed to retrieve job ID or job description from response.")
-    st.session_state['JD_retrieve_error_flag'] = False 
+    st.session_state['JD_retrieve_error_flag'] = False
 
 if st.session_state['JD_create_error_flag']:
     st.error("Failed to create job description. Please try again.")
-    st.session_state['JD_create_error_flag'] = False 
-    
+    st.session_state['JD_create_error_flag'] = False
 
 if st.session_state['JD_warning_flag']:
     st.warning("Please enter a job description before submitting.")
-    st.session_state['JD_warning_flag'] = False   
+    st.session_state['JD_warning_flag'] = False
 
-# Function to fetch job descriptions from MongoDB
+# Fetch job descriptions from MongoDB
 def fetch_job_descriptions():
     return list(collection.find({}, {"_id": 1, "prompt": 1, "job_description": 1}).sort([('_id', -1)]))
 
-# Function to handle New Job Description button
+# Handle New Job Description
 def new_job_description():
     st.session_state['current_job_description'] = ""
     st.session_state['selected_job_id'] = None
     st.session_state['job_submitted'] = False
     st.session_state['job_updated'] = False
     st.session_state['creating_new_job'] = True
-    st.session_state['view_candidates'] = False  # Hide candidates when creating a new job description
+    st.session_state['view_candidates'] = False
+    
 
-# Function to handle logout
+# Handle Logout
 def logout():
     st.session_state.logged_in = False
     st.session_state['current_job_description'] = ""
@@ -110,172 +112,69 @@ def logout():
     st.session_state['creating_new_job'] = False
     switch_page("login")
 
-# Sidebar
-with st.sidebar:
-    # Fetch job descriptions from MongoDB
-    job_descriptions = fetch_job_descriptions()
+# Submit Job Description
+def submit_job_description(job_description):
+    if job_description:
+        api_url = "http://localhost:8081/api/v1/jd"
+        payload = {"prompt": job_description}
+        response = requests.post(api_url, json=payload)
 
-    # New Job Description button
-    st.sidebar.button("New Job Description", on_click=new_job_description)
+        if response.status_code == 201:
+            jd_response = response.json()
+            job_id = jd_response.get("id")
+            prompt_saved = job_description
+            job_description_created = jd_response.get("job_description")
 
-    # Logout button
-    st.sidebar.button("Logout", on_click=logout)
+            if job_id and job_description_created:
+                collection.insert_one({"_id": job_id, "prompt": prompt_saved, "job_description": job_description_created})
+                st.session_state['selected_job_id'] = job_id
+                st.session_state['current_job_description'] = prompt_saved
+                st.session_state['job_submitted'] = True
+                st.session_state['JD_success_flag'] = True
+                st.experimental_rerun()
+            else:
+                st.session_state['JD_retrieve_error_flag'] = True
+        else:
+            st.session_state['JD_create_error_flag'] = True
+    else:
+        st.session_state['JD_warning_flag'] = True
 
-    st.sidebar.markdown("---")  # Separator
+# Update Job Description
 
-    st.sidebar.markdown("### Job Id's")
+def update_job_description(job_description):
+    if st.session_state['update_success_flag']:
+        st.success("Job description updated successfully!")
+        st.session_state['update_success_flag'] = False
 
-    # Display existing job descriptions as clickable links
-    for job in job_descriptions:
-        job_id = job['_id']
-        job_label = f"Job ID: {job_id}"
+    if st.session_state['update_error_flag']:
+        st.error("Failed to update job description. Please try again.")
+        st.session_state['update_error_flag'] = False
 
-        # Show button and handle job ID selection
-        is_selected = st.session_state['selected_job_id'] == job_id
-        button_text = f"{job_label} {'(Selected)' if is_selected else ''}"
+    if st.session_state['update_fetch_error_flag']:
+        st.error("Failed to fetch job description. Please try again.")
+        st.session_state['update_fetch_error_flag'] = False
 
-        if st.sidebar.button(button_text, key=f"job_{job_id}"):
-            st.session_state['selected_job_id'] = job_id
-            st.session_state['current_job_description'] = job.get('prompt', '')  # Use .get() to safely access dictionary keys
-            st.session_state['job_submitted'] = True
+    if st.session_state['update_warning_flag']:
+        st.warning("No job description selected.")
+        st.session_state['update_warning_flag'] = False
+
+    if st.session_state['selected_job_id'] is not None:
+        api_url = f"http://localhost:8081/api/v1/jd/{st.session_state['selected_job_id']}"
+        payload = {"job_description": job_description}
+        update_response = requests.put(api_url, json=payload)
+
+        if update_response.status_code == 200:
+            st.session_state['update_success_flag'] = True
             st.session_state['job_updated'] = False
-            st.session_state['creating_new_job'] = False  # Reset creating_new_job flag
-            st.session_state['view_candidates'] = False  # Hide candidates when selecting a job description
-            
-            # Refresh the page to reflect changes
             st.experimental_rerun()
-
-# Job description input
-job_description = st.text_area("Describe the Job Profile", value=st.session_state['current_job_description'])
-
-# Create columns for buttons
-col1, col2 = st.columns(2)
-
-with col1:
-    # Submit button
-    submit_disabled = st.session_state['selected_job_id'] is not None
-    if st.button("Submit", disabled=submit_disabled):
-        if job_description:
-            # API endpoint
-            api_url = "http://localhost:8081/api/v1/jd"
-            
-            # Payload to send to the API
-            payload = {"prompt": job_description}
-            
-            # Make the POST request
-            response = requests.post(api_url, json=payload)
-
-            if response.status_code == 201:
-                # Parse the response
-                jd_response = response.json()
-                
-                # Extract the job ID, prompt, and job description
-                job_id = jd_response.get("id")
-                prompt_saved = job_description
-                job_description_created = jd_response.get("job_description")
-                
-                if job_id and job_description_created:
-                    # Store job ID, prompt, and job description in MongoDB
-                    collection.insert_one({"_id": job_id, "prompt": prompt_saved, "job_description": job_description_created})
-                    
-                    # Update session state to select the newly created job
-                    st.session_state['selected_job_id'] = job_id
-                    st.session_state['current_job_description'] = prompt_saved
-                    st.session_state['job_submitted'] = True
-                    
-                    # Display success message
-                    st.session_state['JD_success_flag'] = True
-                    
-                    # Update job descriptions in sidebar
-                    st.experimental_rerun()
-                else:
-                    st.session_state['JD_retrieve_error_flag'] = True
-            else:
-                st.session_state['JD_create_error_flag'] = True
         else:
-            st.session_state['JD_warning_flag'] = True
-
-with col2:
-    # Only show these buttons if a job is submitted
-    if st.session_state['job_submitted']:
-        if st.session_state['selected_job_id']:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                open_modal = st.button("View Job Description")
-                if open_modal:
-                    modal.open()
-            
-            with col2:
-                view_candidates_button = st.button("View Candidates")
-                if view_candidates_button:
-                    st.session_state['view_candidates'] = True
-
-if modal.is_open():
-    with modal.container():
+            st.session_state['update_error_flag'] = True
+    else:
+        st.session_state['update_warning_flag'] = True
         
-        if st.session_state['update_success_flag']:
-            st.success("Job description updated successfully!")
-            st.session_state['update_success_flag'] = False  # Reset the flag
 
-        if st.session_state['update_error_flag']:
-            st.error("Failed to update job description. Please try again.")
-            st.session_state['update_error_flag'] = False  # Reset the flag
-        
-        if st.session_state['update_fetch_error_flag']:
-            st.error("Failed to fetch job description. Please try again.")
-            st.session_state['update_fetch_error_flag'] = False  # Reset the flag
-
-        if st.session_state['update_warning_flag']:
-            st.warning("No job description selected.")
-            st.session_state['update_warning_flag'] = False  # Reset the flag
-
-
-        if st.session_state['selected_job_id'] is not None:
-            api_url = f"http://localhost:8081/api/v1/jd/{st.session_state['selected_job_id']}"
-          
-            response = requests.get(api_url)
-
-            if response.status_code == 200:
-                jd_response = response.json()
-
-                job_description = st.text_area("Job Description", value=jd_response.get('job_description', ''), height=250, disabled=not st.session_state['job_updated'])
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    edit_button = st.button("Edit")
-                    if edit_button:
-                        st.session_state['job_updated'] = True
-                        st.experimental_rerun()
-
-                with col2:
-                    if st.session_state['job_updated']:
-                        update_button = st.button("Update")
-                        if update_button:
-                            update_url = api_url
-                            payload = {
-                                "job_description": job_description
-                            }
-                            update_response = requests.put(update_url, json=payload)
-
-                            if update_response.status_code == 200:
-                                st.session_state['update_success_flag'] = True
-                                st.session_state['job_updated'] = False
-                                st.experimental_rerun()
-                            else:
-                                st.session_state['update_error_flag'] = True
-            else:
-                st.session_state['update_fetch_error_flag'] = True
-        else:
-            st.session_state['update_warning_flag'] = True
-
-
-
-# Display candidates if the flag is set
-if st.session_state['view_candidates']:
-    st.subheader("Candidates")
-    
+# # Display Candidates
+def display_candidates():
     col1, col2, col3, col4, col5 = st.columns([1, 3, 3, 3, 3])
     with col1:
         st.markdown("**Select**")
@@ -287,24 +186,27 @@ if st.session_state['view_candidates']:
         st.markdown("**Mobile**")
     with col5:
         st.markdown("**Status**")
-
+        
     candidates_api_url = "http://localhost:8084/api/v1/candidate/"
     response = requests.get(candidates_api_url)
-    
+
     if response.status_code == 200:
         candidates = response.json()
-        
         df_candidates = pd.DataFrame(candidates)
-        df_candidates['Select'] = False
+        st.session_state['df_candidates'] = df_candidates  # Store in session state
+        
+        # Clear previous checkbox selections
+        st.session_state['checked_candidates'] = set()
         
         for idx, row in df_candidates.iterrows():
             col1, col2, col3, col4, col5 = st.columns([1, 3, 3, 3, 3])
-            
+
             with col1:
-                # Use a unique key for each checkbox to store its state
-                if st.checkbox("", key=f"candidate_{idx}"):
-                    if row.to_dict() not in st.session_state['checked_candidates']:
-                        st.session_state['checked_candidates'].append(row.to_dict())
+                selected = st.checkbox("", key=f"candidate_{idx}", value=idx in st.session_state['checked_candidates'])
+                if selected:
+                    st.session_state['checked_candidates'].add(idx)
+                else:
+                    st.session_state['checked_candidates'].discard(idx)
             with col2:
                 st.write(row['name'])
             with col3:
@@ -312,28 +214,151 @@ if st.session_state['view_candidates']:
             with col4:
                 st.write(row['mobile'])
             with col5:
-                st.write("Yes" if row['status'] else "No")
-        
-        # Schedule Interview button
-        if st.button("Schedule Interview"):
-            for candidate in st.session_state['checked_candidates']:
-                phone_number = candidate['mobile']
-                # Replace with your WhatsApp API URL
-                whatsapp_api_url = "https://api.whatsapp.com/send"
-                message = "Hello! We would like to schedule an interview with you."
-                encoded_message = urllib.parse.quote(message)
-                whatsapp_url = f"{whatsapp_api_url}?phone={phone_number}&text={encoded_message}"
-                
-                st.write(f"Sending message to {phone_number}: {whatsapp_url}")
-                # You can use requests to send an actual API request if needed
-                response = requests.get(whatsapp_url)
-                if response.status_code == 200:
-                    st.success(f"Message sent to {phone_number}")
+                if idx in st.session_state['status_update']:
+                    st.write("Interview Scheduled" if st.session_state['status_update'][idx] else "Interview Not Scheduled")
                 else:
-                    st.error(f"Failed to send message to {phone_number}")
-            
-            # Clear selected candidates after scheduling interviews
-            st.session_state['checked_candidates'] = []
-        
+                    st.write("Yes" if row['status'] else "No")
+
+        if st.button("Schedule Interview"):
+            update_status(df_candidates)
+            schedule_interviews()
+
+            # Clear the checkboxes and reset session state variables after scheduling
+            st.session_state['checked_candidates'] = set()
+            st.session_state['status_update'] = {}
+            st.experimental_rerun()
+
     else:
         st.error("Failed to fetch candidates.")
+
+def update_status(df_candidates):
+    # Update the status based on selection
+    st.session_state['status_update'] = {}
+    for idx in df_candidates.index:
+        if idx in st.session_state['checked_candidates']:
+            st.session_state['status_update'][idx] = True
+        else:
+            st.session_state['status_update'][idx] = False
+
+# Schedule Interviews
+def schedule_interviews():
+    df_candidates = st.session_state['df_candidates']  # Retrieve from session state
+    for idx in st.session_state['checked_candidates']:
+        candidate = df_candidates.iloc[idx]
+        phone_number = candidate['mobile']
+        whatsapp_api_url = "https://api.whatsapp.com/send"
+        message = "Hello! We would like to schedule an interview with you."
+        encoded_message = urllib.parse.quote(message)
+        whatsapp_url = f"{whatsapp_api_url}?phone={phone_number}&text={encoded_message}"
+
+        st.write(f"Sending message to {phone_number}: {whatsapp_url}")
+        response = requests.get(whatsapp_url)
+        if response.status_code == 200:
+            st.success(f"Message sent to {phone_number}")
+        else:
+            st.error(f"Failed to send message to {phone_number}")
+
+    # Clear checked candidates after scheduling
+    st.session_state['checked_candidates'] = set()
+
+    # Refresh the candidates' display
+    st.experimental_rerun()
+
+
+# Sidebar
+with st.sidebar:
+    job_descriptions = fetch_job_descriptions()
+    st.sidebar.button("New Job Description", on_click=new_job_description)
+    st.sidebar.button("Logout", on_click=logout)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Job Id's")
+
+    for job in job_descriptions:
+        job_id = job['_id']
+        job_label = f"Job ID: {job_id}"
+        is_selected = st.session_state['selected_job_id'] == job_id
+        button_text = f"{job_label} {'(Selected)' if is_selected else ''}"
+
+        if st.sidebar.button(button_text, key=f"job_{job_id}"):
+            st.session_state['selected_job_id'] = job_id
+            st.session_state['current_job_description'] = job.get('prompt', '')
+            st.session_state['job_submitted'] = True
+            st.session_state['job_updated'] = False
+            st.session_state['creating_new_job'] = False
+            st.session_state['view_candidates'] = False
+            st.session_state['checked_candidates'] = set()
+            st.session_state['status_update'] = {}
+            st.experimental_rerun()
+
+# Job description input
+job_description = st.text_area("Describe the Job Profile", value=st.session_state['current_job_description'])
+
+# Create columns for buttons
+col1, col2 = st.columns(2)
+
+with col1:
+    submit_disabled = st.session_state['selected_job_id'] is not None
+    if st.button("Submit", disabled=submit_disabled):
+        submit_job_description(job_description)
+
+with col2:
+    if st.session_state['job_submitted']:
+        if st.session_state['selected_job_id']:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                open_modal = st.button("View Job Description")
+                if open_modal:
+                    modal.open()
+
+            with col2:
+                view_candidates_button = st.button("View Candidates")
+                if view_candidates_button:
+                    st.session_state['view_candidates'] = True
+
+if modal.is_open():
+    with modal.container():
+        if st.session_state['update_success_flag']:
+            st.success("Job description updated successfully!")
+            st.session_state['update_success_flag'] = False
+
+        if st.session_state['update_error_flag']:
+            st.error("Failed to update job description. Please try again.")
+            st.session_state['update_error_flag'] = False
+
+        if st.session_state['update_fetch_error_flag']:
+            st.error("Failed to fetch job description. Please try again.")
+            st.session_state['update_fetch_error_flag'] = False
+
+        if st.session_state['update_warning_flag']:
+            st.warning("No job description selected.")
+            st.session_state['update_warning_flag'] = False
+
+        if st.session_state['selected_job_id'] is not None:
+            api_url = f"http://localhost:8081/api/v1/jd/{st.session_state['selected_job_id']}"
+            response = requests.get(api_url)
+
+            if response.status_code == 200:
+                jd_response = response.json()
+                job_description = st.text_area("Job Description", value=jd_response.get('job_description', ''), height=250, disabled=not st.session_state['job_updated'])
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    edit_button = st.button("Edit")
+                    if edit_button:
+                        st.session_state['job_updated'] = True
+                        st.experimental_rerun()
+
+                with col2:
+                    if st.session_state['job_updated']:
+                        update_button = st.button("Update")
+                        if update_button:
+                            update_job_description(job_description)
+            else:
+                st.session_state['update_fetch_error_flag'] = True
+        else:
+            st.session_state['update_warning_flag'] = True
+
+if st.session_state['view_candidates']:
+    display_candidates()
+    
